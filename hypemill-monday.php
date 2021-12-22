@@ -16,6 +16,9 @@ if ( !defined( 'ABSPATH' ) ) {
     exit;
 }
 
+require_once __DIR__ . "/functions.php";
+require_once __DIR__ . "/update-order-status.php";
+
 final class hypemill_monday {
 
     /**
@@ -33,49 +36,83 @@ final class hypemill_monday {
      */
     public function __construct() {
 
-        $this->token = 'eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjEzNzEyNTAyOCwidWlkIjoyNjQ5MTU5OSwiaWFkIjoiMjAyMS0xMi0xNFQxMzowOToxNC4wMDBaIiwicGVyIjoibWU6d3JpdGUiLCJhY3RpZCI6MTA2MzI5MTcsInJnbiI6InVzZTEifQ.BdZU5K4BUbucmBHIS_wTcNLyL6k7R03dDPwXtNEQnOc';
+        $this->token = 'eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjEzODAxNjg4MSwidWlkIjoyNjQ4ODMxOCwiaWFkIjoiMjAyMS0xMi0yMVQxMzowMzoyOC43OTJaIiwicGVyIjoibWU6d3JpdGUiLCJhY3RpZCI6MTA2MzI5MTcsInJnbiI6InVzZTEifQ.RLf3jrN0xg-ttIFas_XbbnE6t5BiUkE1p4QaXGeLU5Y';
         $this->apiUrl = 'https://api.monday.com/v2';
 
-        // add_action( 'woocommerce_thankyou', [$this, 'hypeMillCustomers'], 0, 1 );
-        // add_action( 'woocommerce_thankyou', [$this, 'hypeMillOrders'], 0, 1 );
-        //$this->wc_thank_you_order_data();
+        //add_action( 'woocommerce_thankyou', [$this, 'hypemill_order_to_monday']);
+
+        add_action( 'init', [$this, 'hgetOrdersss'] );
+
+    }
+
+    public function hgetOrdersss( ) {
+
+        $order_id = 26179;
+
+        $order = wc_get_order( $order_id );
+
+        foreach ( $order->get_items() as $item_id => $item ) {
+
+            $product_id = $item->get_product_id();
+            $allmeta = $item->get_meta_data();
+
+            $item_name = $item->get_name();
+            $product_name = hypemill_product_style( $item_name );
+            
+
+
+
+            // Done
+            $terms = get_the_terms( $product_id, 'product_cat' );
+            $catName = hypemill_product_cat( $terms[0]->name );
+
+            write_log("==================MetaData====================");
+            write_log($product_name); 
+        }
+
     }
 
     /**
-     * Test Function
+     * All methods handler method.
      */
-    public function wc_thank_you_order_data( $order_id = '' ) {
+    public function hypemill_order_to_monday( $order_id ) {
 
-        //topics = Billing Group ID
-        // text0 = First Name
-        // text = Last Name
-        // address = Address
-        // phone = Phone
-        // email = Email
-        // text4 = Notes
+        $billingId = $this->hypeMillBillingDetails( $order_id );
+        $shippingId = $this->hypeMillShippingDetails( $order_id );
+        $orderItemId = $this->hypeMillOrders( $order_id, $billingId, $shippingId );
+        $this->CreateHypeMillSubItem($order_id, $orderItemId);
+        //$this->hypeMillUpdateStatus($order_id, $orderItemId);
 
-        //duplicate_of_billing_details = Shipping Group ID
+    }
 
-        //new_group = Hoodsly Wholesalers Group ID
+   
 
-        $billing_firstName = "Azizul";
-        $billing_lastName = "Tex";
+    /**
+     * Insert Billing details to monday when create order
+     */
+    public function hypeMillBillingDetails( $order_id ) {
+
+        $order = wc_get_order( $order_id );
+
+        $billing_firstName = $order->get_billing_first_name();
+        $billing_lastName = $order->get_billing_last_name();
         $billing_fullName = $billing_firstName . " " . $billing_lastName;
-        $billing_Address = "Azizul Tex Bhobor Para, Mujibnagar, Meherpur Mujibnagar NC 71023 US";
-        $billing_phone = "18547220499";
-        $billing_email = "richardsetu1@gmail.com";
-        $customer_note = "This is from our plugin";
+        $billing_Address = $order->get_billing_address_1() ." ". $order->get_billing_address_2() .", ".$order->get_billing_city() .", ". $order->get_billing_state() . " " . $order->get_billing_postcode();
+        $billing_phone = $order->get_billing_phone();
+        $billing_email = $order->get_billing_email();
+        $customer_note = $order->get_customer_note();
 
         $billing_query = 'mutation ($billingItemName: String!, $billing_columnVals: JSON!) { create_item (board_id:2024968615, group_id:"topics", item_name:$billingItemName, column_values:$billing_columnVals) { id } }';
 
         $billing_vars = ['billingItemName' => $billing_fullName,
-            'billing_columnVals'                  => json_encode( [
+            'billing_columnVals'  => json_encode( [
                 'text0'   => $billing_firstName,
                 'text'    => $billing_lastName,
                 'address' => $billing_Address,
                 'phone'   => $billing_phone,
-                'email'   => ['label' => $billing_email],
+                'email'   => ['email' => $billing_email, 'text' => $billing_email],
                 'text4'   => $customer_note,
+
             ] )];
 
         $billing_args = array(
@@ -84,42 +121,107 @@ final class hypemill_monday {
                 'Content-Type'  => 'application/json',
                 'Authorization' => $this->token,
             ),
-            'body'    => json_encode( ['query' => $billing_query, 'variables' => $billing_vars] ),
-            'content' => json_encode( ['query' => $billing_query, 'variables' => $billing_vars] ),
+            'body'    => json_encode( ['query' => $billing_query, 'variables' => $billing_vars] )
         );
 
         $billing_request = wp_remote_post( $this->apiUrl, $billing_args );
+        
+        $jsonId = json_decode($billing_request['body'], true);
+        $itemId = $jsonId['data']['create_item']['id'];
 
-        write_log( $billing_request['body'] );
+        return $itemId;
+
     }
 
     /**
-     * Insert Customer details to monday when create order
+     * Insert Shipping details to monday when create order
      */
-    public function hypeMillCustomers( $order_id ) {
+    public function hypeMillShippingDetails( $order_id ) {
+
+        $order = wc_get_order( $order_id );
+
+        $shipping_firstName = $order->get_shipping_first_name() ? $order->get_shipping_first_name() : '';
+        $shipping_lastName = $order->get_shipping_last_name() ? $order->get_shipping_last_name() : '';
+        $shipping_fullName = $shipping_firstName . " " . $shipping_lastName;
+        $shipping_Address = '';
+        if ( $shipping_firstName ) {
+            $shipping_Address = $order->get_shipping_address_1() ." ". $order->get_shipping_address_2() .", ".$order->get_shipping_city() .", ". $order->get_shipping_state() . " " . $order->get_shipping_postcode();
+        }
+
+        $shipping_query = 'mutation ($shippingItemName: String!, $shipping_columnVals: JSON!) { create_item (board_id:2046779965, group_id:"topics", item_name:$shippingItemName, column_values:$shipping_columnVals) { id } }';
+
+        $shipping_vars = ['shippingItemName' => $shipping_fullName,
+            'shipping_columnVals'  => json_encode( [
+                'text0'   => $shipping_firstName,
+                'text'    => $shipping_lastName,
+                'address' => $shipping_Address,
+            ] )];
+
+        $shipping_args = array(
+            'method'  => 'POST',
+            'headers' => array(
+                'Content-Type'  => 'application/json',
+                'Authorization' => $this->token,
+            ),
+            'body'    => json_encode( ['query' => $shipping_query, 'variables' => $shipping_vars] )
+        );
+
+        $shipping_request = wp_remote_post( $this->apiUrl, $shipping_args );
+        
+        $jsonId = json_decode($shipping_request['body'], true);
+        $itemId = $jsonId['data']['create_item']['id'];
+
+        return $itemId;
 
     }
 
     /**
      * Insert order details to monday when create order
      */
-    public function hypeMillOrders( $order_id ) {
+    public function hypeMillOrders( $order_id, int $billingId, int $shippingId ) {
+
+        $order = wc_get_order( $order_id );
+
+        $shippingMethod = $order->get_shipping_method();
+
+        switch ($shippingMethod) {
+            case 'Free Curbside Delivery':
+                $shipping = 'Standard';
+                break;
+            case 'Inside Delivery':
+                $shipping = 'Inside Delivery';
+                break;
+            case 'Local Pickup':
+                $shipping = 'Local Pickup';
+                break;
+            default:
+                # code...
+                break;
+        }
 
         $trackingNumber = get_post_meta( $order_id, '_aftership_tracking_number', true ) != '' ? get_post_meta( $order_id, '_aftership_tracking_number', true ) : '';
-        $billingAddress = get_post_meta( $order_id, '_billing_address_index', true ) != '' ? get_post_meta( $order_id, '_billing_address_index', true ) : '';
-        $shippingAddress = get_post_meta( $order_id, '_shipping_address_index', true ) != '' ? get_post_meta( $order_id, '_shipping_address_index', true ) : '';
-
+        $estimatedShippingDate = get_post_meta( $order_id, 'estimated_shipping_date', true ) != '' ? get_post_meta( $order_id, 'estimated_shipping_date', true ) : '';
+        $billofLandingId = get_post_meta( $order_id, 'bill_of_landing_id', true ) != '' ? get_post_meta( $order_id, 'bill_of_landing_id', true ) : '';
+        $bolPdf = "http://staging-hoodsly.kinsta.cloud/wp-content/uploads/bol/$billofLandingId.pdf";
+        $shippingLabelPdf = "http://staging-hoodsly.kinsta.cloud/wp-content/uploads/bol/shipping_label_$billofLandingId.pdf";
+        
+        $ti = strtotime($estimatedShippingDate);
+        $date = (date("Y-m-d", $ti));
         $query = 'mutation ($myItemName: String!, $columnVals: JSON!) { create_item (board_id:2008724190, group_id:"topics", item_name:$myItemName, column_values:$columnVals) { id } }';
-
-        $vars = ['myItemName' => 'Hello world!',
+        
+        $billingIDs = [$billingId];
+        $shippingIDs = [$shippingId];
+        
+        $vars = ['myItemName' => '#'.$order_id,
             'columnVals'          => json_encode( [
                 'status'   => ['label' => 'Finishing'],
-                'date4'    => ['date' => '1993-08-27'],
-                // 'location' => ['date' => '1993-08-27'],
-                // 'files' => ['date' => '1993-08-27'],
-                // 'files4' => ['date' => '1993-08-27'],
-                'text'     => 'w3432432432',
-                'status_1' => ['label' => 'Standard'],
+                'date4'    => ['date' => $date],
+                'connect_boards0'    => ['item_ids' => $billingIDs],
+                'dup__of_billing_details'    => ['item_ids' => $shippingIDs],
+                'link' => ['url' => $bolPdf, 'text' => 'View'],
+                'link9' => ['url' => $shippingLabelPdf, 'text' => 'View'],
+                'text'     => $trackingNumber,
+                'status_1' => ['label' => $shipping]
             ] )];
 
         $args = array(
@@ -128,15 +230,66 @@ final class hypemill_monday {
                 'Content-Type'  => 'application/json',
                 'Authorization' => $this->token,
             ),
-            'body'    => json_encode( ['query' => $query, 'variables' => $vars] ),
-            'content' => json_encode( ['query' => $query, 'variables' => $vars] ),
+            'body'    => json_encode( ['query' => $query, 'variables' => $vars] )
         );
 
         $request = wp_remote_post( $this->apiUrl, $args );
 
-        write_log( $query );
-        //write_log( $request['body'] );
+        $jsonId = json_decode($request['body'], true);
+        $itemId = $jsonId['data']['create_item']['id'];
+
+        add_post_meta( $order_id, 'monday_created_id', $itemId);
+
+        write_log($shipping);
+ 
+        return $itemId;
+
     }
+
+    /**
+     * Create order subitem to monday when create order
+     */
+    public function CreateHypeMillSubItem( $order_id, int $parentItemId ) {
+
+        $order = wc_get_order( $order_id );
+
+
+        $query = 'mutation ($parentItemId: Int!, $myItemName: String!, $columnVals: JSON!) { create_subitem (parent_item_id: $parentItemId, item_name:$myItemName, column_values:$columnVals) { id board { id } } }';
+        
+        $vars = ['myItemName' => '#'.$order_id,
+                'parentItemId' => $parentItemId,
+                'columnVals'   => json_encode( [
+                'status'   => ['label' => 'Product Type'],
+                'status4'   => ['label' => 'Style'],
+                'status301'   => ['label' => 'Finish'],
+                'status3'   => ['label' => 'Size'],
+                'status0'   => ['label' => 'Ventilation'],
+                'status1'   => ['label' => 'Recirculating Filter'],
+                'status304'   => ['label' => 'Recirculating Vents'],
+                'status8'   => ['label' => 'Trim'],
+                'status9'   => ['label' => 'Trim Install'],
+                'status30'   => ['label' => 'Depth'],
+                'status21'   => ['label' => 'Reduce Height'],
+                'status09'   => ['label' => 'Chimney Extension'],
+                'status36'   => ['label' => 'Solid Bottom'],
+                'status6'   => ['label' => 'Rushed'],
+            ] )];
+
+        $args = array(
+            'method'  => 'POST',
+            'headers' => array(
+                'Content-Type'  => 'application/json',
+                'Authorization' => $this->token,
+            ),
+            'body'    => json_encode( ['query' => $query, 'variables' => $vars] )
+        );
+
+        $request = wp_remote_post( $this->apiUrl, $args );
+
+        write_log($request['body']);
+
+    }
+
 
 }
 
@@ -145,6 +298,7 @@ new hypemill_monday;
 //$query = '{ items (limit:50) {column_values { id value }} }';
 
 //$query = "query {boards (ids: 2008724190) {owner{ id }  columns { id title type }}}";
+//$query = "query {boards (ids: 2008724190) {groups{ id title } columns { id title type }}}";
 
 // $request = wp_remote_post($apiUrl, $args);
 
