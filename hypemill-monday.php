@@ -39,15 +39,18 @@ final class hypemill_monday {
         $this->token = 'eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjEzODAxNjg4MSwidWlkIjoyNjQ4ODMxOCwiaWFkIjoiMjAyMS0xMi0yMVQxMzowMzoyOC43OTJaIiwicGVyIjoibWU6d3JpdGUiLCJhY3RpZCI6MTA2MzI5MTcsInJnbiI6InVzZTEifQ.RLf3jrN0xg-ttIFas_XbbnE6t5BiUkE1p4QaXGeLU5Y';
         $this->apiUrl = 'https://api.monday.com/v2';
 
-        //add_action( 'woocommerce_thankyou', [$this, 'hypemill_order_to_monday']);
+        add_action( 'woocommerce_thankyou', [$this, 'hypemill_order_to_monday']);
 
-        add_action( 'init', [$this, 'hgetOrdersss'] );
+        //add_action( 'init', [$this, 'hgetOrdersss'] );
+        new UpdateStatusTrello($this->token, $this->apiUrl);
+
+        
 
     }
 
     public function hgetOrdersss( ) {
 
-        $order_id = 26179;
+        $order_id = 26189;
 
         $order = wc_get_order( $order_id );
 
@@ -56,18 +59,22 @@ final class hypemill_monday {
             $product_id = $item->get_product_id();
             $allmeta = $item->get_meta_data();
 
-            $item_name = $item->get_name();
-            $product_name = hypemill_product_style( $item_name );
             
-
-
-
+           
             // Done
             $terms = get_the_terms( $product_id, 'product_cat' );
             $catName = hypemill_product_cat( $terms[0]->name );
 
-            write_log("==================MetaData====================");
-            write_log($product_name); 
+            $item_name = $item->get_name();
+            $product_name = hypemill_product_style( $item_name );
+
+            $color = ucwords($item->get_meta( 'pa_color', true ));
+
+            
+
+
+            // write_log("==================MetaData====================");
+            // write_log($allmeta); 
         }
 
     }
@@ -81,11 +88,8 @@ final class hypemill_monday {
         $shippingId = $this->hypeMillShippingDetails( $order_id );
         $orderItemId = $this->hypeMillOrders( $order_id, $billingId, $shippingId );
         $this->CreateHypeMillSubItem($order_id, $orderItemId);
-        //$this->hypeMillUpdateStatus($order_id, $orderItemId);
 
     }
-
-   
 
     /**
      * Insert Billing details to monday when create order
@@ -202,8 +206,14 @@ final class hypemill_monday {
         $trackingNumber = get_post_meta( $order_id, '_aftership_tracking_number', true ) != '' ? get_post_meta( $order_id, '_aftership_tracking_number', true ) : '';
         $estimatedShippingDate = get_post_meta( $order_id, 'estimated_shipping_date', true ) != '' ? get_post_meta( $order_id, 'estimated_shipping_date', true ) : '';
         $billofLandingId = get_post_meta( $order_id, 'bill_of_landing_id', true ) != '' ? get_post_meta( $order_id, 'bill_of_landing_id', true ) : '';
-        $bolPdf = "http://staging-hoodsly.kinsta.cloud/wp-content/uploads/bol/$billofLandingId.pdf";
-        $shippingLabelPdf = "http://staging-hoodsly.kinsta.cloud/wp-content/uploads/bol/shipping_label_$billofLandingId.pdf";
+        
+        $text = $bolPdf = $shippingLabelPdf = '';
+
+        if ( $billofLandingId ) {
+            $bolPdf = "http://staging-hoodsly.kinsta.cloud/wp-content/uploads/bol/$billofLandingId.pdf";
+            $shippingLabelPdf = "http://staging-hoodsly.kinsta.cloud/wp-content/uploads/bol/shipping_label_$billofLandingId.pdf";
+            $text = 'View';
+        }
         
         $ti = strtotime($estimatedShippingDate);
         $date = (date("Y-m-d", $ti));
@@ -214,12 +224,12 @@ final class hypemill_monday {
         
         $vars = ['myItemName' => '#'.$order_id,
             'columnVals'          => json_encode( [
-                'status'   => ['label' => 'Finishing'],
+                'status'   => ['label' => 'In Production'],
                 'date4'    => ['date' => $date],
                 'connect_boards0'    => ['item_ids' => $billingIDs],
                 'dup__of_billing_details'    => ['item_ids' => $shippingIDs],
-                'link' => ['url' => $bolPdf, 'text' => 'View'],
-                'link9' => ['url' => $shippingLabelPdf, 'text' => 'View'],
+                'link' => ['url' => $bolPdf, 'text' => $text],
+                'link9' => ['url' => $shippingLabelPdf, 'text' => $text],
                 'text'     => $trackingNumber,
                 'status_1' => ['label' => $shipping]
             ] )];
@@ -239,8 +249,6 @@ final class hypemill_monday {
         $itemId = $jsonId['data']['create_item']['id'];
 
         add_post_meta( $order_id, 'monday_created_id', $itemId);
-
-        write_log($shipping);
  
         return $itemId;
 
@@ -253,40 +261,59 @@ final class hypemill_monday {
 
         $order = wc_get_order( $order_id );
 
+        foreach ( $order->get_items() as $item_id => $item ) {
 
-        $query = 'mutation ($parentItemId: Int!, $myItemName: String!, $columnVals: JSON!) { create_subitem (parent_item_id: $parentItemId, item_name:$myItemName, column_values:$columnVals) { id board { id } } }';
-        
-        $vars = ['myItemName' => '#'.$order_id,
-                'parentItemId' => $parentItemId,
-                'columnVals'   => json_encode( [
-                'status'   => ['label' => 'Product Type'],
-                'status4'   => ['label' => 'Style'],
-                'status301'   => ['label' => 'Finish'],
-                'status3'   => ['label' => 'Size'],
-                'status0'   => ['label' => 'Ventilation'],
-                'status1'   => ['label' => 'Recirculating Filter'],
-                'status304'   => ['label' => 'Recirculating Vents'],
-                'status8'   => ['label' => 'Trim'],
-                'status9'   => ['label' => 'Trim Install'],
-                'status30'   => ['label' => 'Depth'],
-                'status21'   => ['label' => 'Reduce Height'],
-                'status09'   => ['label' => 'Chimney Extension'],
-                'status36'   => ['label' => 'Solid Bottom'],
-                'status6'   => ['label' => 'Rushed'],
-            ] )];
+            $product_id = $item->get_product_id();
 
-        $args = array(
-            'method'  => 'POST',
-            'headers' => array(
-                'Content-Type'  => 'application/json',
-                'Authorization' => $this->token,
-            ),
-            'body'    => json_encode( ['query' => $query, 'variables' => $vars] )
-        );
+            $terms = get_the_terms( $product_id, 'product_cat' );
+            $productType = hypemill_product_cat( $terms[0]->name );
 
-        $request = wp_remote_post( $this->apiUrl, $args );
+            $product_name = $item->get_name();
+            $product_style = hypemill_product_style( $product_name );
 
-        write_log($request['body']);
+            $Finish = ucwords($item->get_meta( 'pa_color', true ));
+
+            $size = hypemill_product_size( $item );
+
+
+            $query = 'mutation ($parentItemId: Int!, $myItemName: String!, $columnVals: JSON!) { create_subitem (parent_item_id: $parentItemId, item_name:$myItemName, column_values:$columnVals) { id board { id } } }';
+            
+            $vars = ['myItemName' => $product_name,
+                    'parentItemId' => $parentItemId,
+                    'columnVals'   => json_encode( [
+                    'status'   => ['label' => $productType],
+                    'status4'   => ['label' => $product_style],
+                    'status301'   => ['label' => $Finish],
+                    'status3'   => ['label' => $size],
+                    // 'status0'   => ['label' => 'Ventilation'],
+                    // 'status1'   => ['label' => 'Recirculating Filter'],
+                    // 'status304'   => ['label' => 'Recirculating Vents'],
+                    // 'status8'   => ['label' => 'Trim'],
+                    // 'status9'   => ['label' => 'Trim Install'],
+                    // 'status30'   => ['label' => 'Depth'],
+                    // 'status21'   => ['label' => 'Reduce Height'],
+                    // 'status09'   => ['label' => 'Chimney Extension'],
+                    // 'status36'   => ['label' => 'Solid Bottom'],
+                    // 'status6'   => ['label' => 'Rushed'],
+                ] )];
+
+            $args = array(
+                'method'  => 'POST',
+                'headers' => array(
+                    'Content-Type'  => 'application/json',
+                    'Authorization' => $this->token,
+                ),
+                'body'    => json_encode( ['query' => $query, 'variables' => $vars] )
+            );
+
+            $request = wp_remote_post( $this->apiUrl, $args );
+
+            write_log($vars);
+
+            write_log("================Body===============");
+
+            write_log($request['body']);
+        }
 
     }
 
